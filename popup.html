@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Coursera Translate Extension</title>
+    <link href="popup.css" rel="stylesheet">
+</head>
+
+<body>
+    <div class="container">
+        <!-- Header -->
+        <div class="header">
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                    d="M3 5h12M9 3v2m1.048 9.5A18.022 18.022 0 016.412 9m6.088 9h7M11 21l5-10 5 10M12.751 5C11.783 10.77 8.07 15.61 3 18.129">
+                </path>
+            </svg>
+            <h1>Coursera Translator</h1>
+        </div>
+
+        <!-- Language Selector -->
+        <div class="form-group">
+            <label for="lang">Select Language</label>
+            <select id="lang" class="select">
+                <option value="vi">Vietnamese</option>
+                <option value="zh">Chinese</option>
+                <option value="ko">Korean</option>
+                <option value="ja">Japanese</option>
+            </select>
+        </div>
+
+        <!-- Toggle Switch -->
+        <div class="toggle-container">
+            <label class="toggle-label">
+                <span>Translate Subtitles</span>
+                <input type="checkbox" id="translateToggle" class="toggle-input">
+                <span class="toggle-slider"></span>
+            </label>
+        </div>
+    </div>
+    <script src="popup.js"></script>
+</body>
+
+</html>
