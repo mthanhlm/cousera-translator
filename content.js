@@ -1,12 +1,22 @@
-// Lắng nghe message từ popup
+// Global variables
+let isTranslating = false;
+let selectedLanguage = 'vi';
+let originalCuesText = new Map();
+let translatedSubtitles = new Map();
+let subtitles = [];
+let currentUrl = window.location.href;
+let currentVideoSrc = null;
+
+// Message listener from popup
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     if (request.method === 'translate') {
         isTranslating = true;
+        selectedLanguage = request.lang || 'vi';
         const icon = document.querySelector('.translate-icon');
         if (icon) {
             icon.style.backgroundColor = '#1E80E2';
         }
-        openBilingual();
+        setTimeout(() => openBilingual(), 100);
         sendResponse({ method: 'translate', status: 'success' });
         return true;
     } else if (request.method === 'restoreEnglish') {
@@ -21,109 +31,117 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     }
 });
 
-// Kiểm tra xem đang ở trang nào
+// Get current site
 function getCurrentSite() {
     const url = window.location.href;
-    if (url.includes('coursera.org')) {
-        return 'coursera';
-    } else if (url.includes('learn.deeplearning.ai')) {
-        return 'deeplearning';
-    }
+    if (url.includes('coursera.org')) return 'coursera';
+    if (url.includes('learn.deeplearning.ai')) return 'deeplearning';
     return null;
 }
 
+// Main translation function
 async function openBilingual() {
     const site = getCurrentSite();
     if (site === 'coursera') {
-        await openBilingualCoursera();
+        await translateCoursera();
     } else if (site === 'deeplearning') {
-        await openBilingualDeeplearning();
+        await translateDeeplearning();
     }
 }
 
-async function openBilingualCoursera() {
-    let tracks = document.getElementsByTagName("track");
-    let en;
+// Translate Coursera subtitles
+async function translateCoursera() {
+    const tracks = document.getElementsByTagName("track");
+    let enTrack = null;
 
-    // Thêm đoạn code kiểm tra và xóa icon nếu đã tồn tại
-    const existingIcon = document.querySelector('.translate-icon');
-    if (existingIcon) {
-        existingIcon.remove();
+    for (let i = 0; i < tracks.length; i++) {
+        if (tracks[i].srclang === "en") {
+            enTrack = tracks[i];
+            break;
+        }
     }
 
-    if (tracks.length) {
-        for (let i = 0; i < tracks.length; i++) {
-            if (tracks[i].srclang === "en") {
-                en = tracks[i];
-            }
-        }
+    if (!enTrack) {
+        console.log('No English track found');
+        return;
+    }
 
-        if (en) {
-            en.track.mode = "showing";
+    enTrack.track.mode = "showing";
+    await sleep(500);
 
-            await sleep(500);
-            let cues = en.track.cues;
+    const cues = enTrack.track.cues;
+    if (!cues || cues.length === 0) {
+        console.log('No cues found');
+        return;
+    }
 
-            // Lưu text gốc vào cache trước khi dịch
-            originalCuesText.clear();
-            for (let i = 0; i < cues.length; i++) {
-                originalCuesText.set(i, cues[i].text);
-            }
+    // Save original text
+    originalCuesText.clear();
+    for (let i = 0; i < cues.length; i++) {
+        originalCuesText.set(i, cues[i].text);
+    }
 
-            // Tìm các điểm kết thúc câu trong phụ đề tiếng Anh
-            var endSentence = [];
-            for (let i = 0; i < cues.length; i++) {
-                for (let j = 0; j < cues[i].text.length; j++) {
-                    if (cues[i].text[j] == "." && cues[i].text[j + 1] == undefined) {
-                        endSentence.push(i);
-                    }
-                }
-            }
-
-            var cuesTextList = getTexts(cues);
-            getTranslation(cuesTextList, (translatedText) => {
-                var translatedList = translatedText.split(/[zZ]\s*~~~\s*[zZ]/);
-                translatedList.splice(-1, 1);
-
-                for (let i = 0; i < endSentence.length; i++) {
-                    if (i != 0) {
-                        for (let j = endSentence[i - 1] + 1; j <= endSentence[i]; j++) {
-                            if (cues[j] && translatedList[i]) {
-                                cues[j].text = translatedList[i];
-                            }
-                        }
-                    } else {
-                        for (let j = 0; j <= endSentence[i]; j++) {
-                            if (cues[j] && translatedList[i]) {
-                                cues[j].text = translatedList[i];
-                            }
-                        }
-                    }
+    // Translate each cue individually for real-time display
+    for (let i = 0; i < cues.length; i++) {
+        const originalText = cues[i].text.replace(/\n/g, ' ').trim();
+        if (originalText) {
+            getTranslation(originalText, (translated) => {
+                if (cues[i]) {
+                    cues[i].text = translated;
                 }
             });
         }
     }
 }
 
-let translatedSubtitles = new Map(); // Cache cho các bản dịch
+// Translate Deeplearning.ai subtitles
+async function translateDeeplearning() {
+    console.log("Starting deeplearning translation");
 
-// Thêm hàm để tắt/bật subtitle gốc
-function toggleDefaultCaptions(shouldDisable) {
-    const captionButtons = document.querySelectorAll('button.vds-caption-button');
-    const captionButton = captionButtons[captionButtons.length - 1];
-    if (captionButton) {
-        const isPressed = captionButton.getAttribute('aria-pressed') === 'true';
-        if (shouldDisable && isPressed) {
-            captionButton.click(); // Tắt CC đi
-            console.log('Default captions disabled');
-        } else if (!shouldDisable && !isPressed) {
-            captionButton.click(); // Bật CC lên
-            console.log('Default captions enabled');
-        }
+    // Open transcript panel
+    const transcriptButton = document.querySelector('button.vds-button[aria-label="open transcript panel"]');
+    if (transcriptButton) {
+        transcriptButton.click();
+        await sleep(2000);
     }
+
+    // Read transcript
+    const paragraphs = document.querySelectorAll('p.text-neutral');
+    const texts = [];
+    
+    paragraphs.forEach(p => {
+        const time = p.querySelector('span.link-primary')?.innerText || '';
+        const text = p.querySelector('span:not(.link-primary)')?.innerText || '';
+        if (time && text) {
+            texts.push([time, text.trim()]);
+        }
+    });
+
+    subtitles = texts;
+    console.log(`Found ${subtitles.length} subtitles`);
+
+    // Translate all subtitles
+    translatedSubtitles.clear();
+    for (const [time, text] of subtitles) {
+        getTranslation(text, (translated) => {
+            translatedSubtitles.set(text, translated);
+        });
+    }
+
+    // Close transcript panel
+    await sleep(1000);
+    const container = document.querySelector('div.sticky.top-0.flex.justify-between.bg-base-200.py-4.pr-4.text-neutral');
+    const closeButton = container?.querySelector('button.btn.btn-circle.btn-ghost.btn-sm');
+    if (closeButton) {
+        closeButton.click();
+    }
+
+    // Create caption display
+    createTranslatedCaptionsDiv();
+    startSubtitleUpdater();
 }
 
-// Thêm hàm tạo div hiển thị phụ đề dịch
+// Create translated captions div
 function createTranslatedCaptionsDiv() {
     const videoContainer = document.querySelector('div[data-media-provider]');
     if (!videoContainer) return null;
@@ -145,32 +163,20 @@ function createTranslatedCaptionsDiv() {
         font-size: 20px;
         pointer-events: none;
         max-width: 80%;
-        width: auto;
-        display: flex;
-        justify-content: center;
     `;
 
-    // Tạo cấu trúc giống với phụ đề gốc
     const cueDisplay = document.createElement('div');
     cueDisplay.setAttribute('data-part', 'cue-display');
     cueDisplay.style.cssText = `
-        text-align: center;
-        display: inline-block;
         background-color: rgba(0, 0, 0, 0.6);
         padding: 8px 16px;
         border-radius: 8px;
-        backdrop-filter: blur(2px);
-        width: auto;
-        min-width: min-content;
+        display: inline-block;
     `;
 
     const cueDiv = document.createElement('div');
     cueDiv.setAttribute('data-part', 'cue');
-    cueDiv.style.cssText = `
-        line-height: 1.4;
-        white-space: pre-wrap;
-        display: inline;
-    `;
+    cueDiv.style.cssText = `line-height: 1.4; white-space: pre-wrap;`;
 
     cueDisplay.appendChild(cueDiv);
     translatedCaptionsDiv.appendChild(cueDisplay);
@@ -179,337 +185,7 @@ function createTranslatedCaptionsDiv() {
     return translatedCaptionsDiv;
 }
 
-// Thêm biến để theo dõi observer
-let captionsObserver = null;
-let captionsCheckInterval = null;
-
-// Thêm hàm để ẩn caption gốc
-function hideOriginalCaptions() {
-    const captionsDivs = document.querySelectorAll('.vds-captions');
-    captionsDivs.forEach(div => {
-        if (div) {
-            div.style.display = 'none';
-        }
-    });
-}
-
-// Thêm hàm để theo dõi và ẩn caption gốc
-function observeCaptions() {
-    if (captionsObserver) return;
-
-    const videoContainer = document.querySelector('div[data-media-provider]');
-    if (!videoContainer) return;
-
-    // Tạo observer với cấu hình mở rộng
-    captionsObserver = new MutationObserver((mutations) => {
-        mutations.forEach((mutation) => {
-            // Kiểm tra các node được thêm vào
-            if (mutation.addedNodes.length) {
-                mutation.addedNodes.forEach((node) => {
-                    if (node.classList && node.classList.contains('vds-captions')) {
-                        node.style.display = 'none';
-                    }
-                    // Kiểm tra sâu hơn trong cây DOM
-                    const captionsDivs = node.querySelectorAll ? node.querySelectorAll('.vds-captions') : [];
-                    captionsDivs.forEach(div => {
-                        div.style.display = 'none';
-                    });
-                });
-            }
-            // Kiểm tra các thay đổi về thuộc tính
-            if (mutation.type === 'attributes' && mutation.target.classList && mutation.target.classList.contains('vds-captions')) {
-                mutation.target.style.display = 'none';
-            }
-        });
-    });
-
-    // Theo dõi với cấu hình mở rộng
-    captionsObserver.observe(videoContainer, {
-        childList: true,
-        subtree: true,
-        attributes: true,
-        attributeFilter: ['style', 'class']
-    });
-
-    // Thêm interval check định kỳ
-    if (captionsCheckInterval) {
-        clearInterval(captionsCheckInterval);
-    }
-    captionsCheckInterval = setInterval(hideOriginalCaptions, 100);
-
-    // Ẩn caption hiện tại
-    hideOriginalCaptions();
-}
-
-// Thêm hàm để dừng theo dõi
-function stopObservingCaptions() {
-    if (captionsObserver) {
-        captionsObserver.disconnect();
-        captionsObserver = null;
-    }
-    if (captionsCheckInterval) {
-        clearInterval(captionsCheckInterval);
-        captionsCheckInterval = null;
-    }
-    // Khôi phục hiển thị caption gốc
-    const captionsDivs = document.querySelectorAll('.vds-captions');
-    captionsDivs.forEach(div => {
-        if (div) {
-            div.style.display = '';
-        }
-    });
-}
-
-async function openBilingualDeeplearning() {
-    console.log("openBilingualDeeplearning");
-
-    // Bật CC gốc và bắt đầu theo dõi
-    toggleDefaultCaptions(true);
-    observeCaptions();
-
-    // Tạo div hiển thị phụ đề dịch
-    createTranslatedCaptionsDiv();
-
-    // Open transcript panel
-    const transcriptButton = document.querySelector('button.vds-button[aria-label="open transcript panel"]');
-    if (transcriptButton) {
-        transcriptButton.click();
-        console.log('Transcript panel opened');
-    }
-
-    // Wait for transcript to load
-    await sleep(2000);
-
-    // Read transcript
-    const paragraphs = document.querySelectorAll('p.text-neutral');
-    const texts = Array.from(paragraphs).map(p => {
-        const time = p.querySelector('span.link-primary') ? p.querySelector('span.link-primary').innerText : '';
-        const text = p.querySelector('span:not(.link-primary)') ? p.querySelector('span:not(.link-primary)').innerText : '';
-        return [time, text];
-    });
-
-    // Process and merge subtitles
-    let mergedSubtitles = [];
-    let currentSubtitle = ['', ''];
-
-    texts.forEach(([time, text], index) => {
-        if (currentSubtitle[0] === '') {
-            currentSubtitle[0] = time;
-        }
-        currentSubtitle[1] += ` ${text}`;
-
-        if (text.trim().endsWith('.') || index === texts.length - 1) {
-            mergedSubtitles.push([currentSubtitle[0], currentSubtitle[1].trim()]);
-            currentSubtitle = ['', ''];
-        }
-    });
-
-    // Filter valid subtitles and store them
-    subtitles = mergedSubtitles.filter(sub => sub[0] !== '' && sub[1] !== '');
-    console.log("Subtitles loaded:", subtitles);
-
-    // Dịch tất cả subtitle một lần
-    const allText = subtitles.map(sub => sub[1]).join(' z~~~z ');
-    getTranslation(allText, (translatedText) => {
-        const translations = translatedText.split(/[zZ]\s*~~~\s*[zZ]/);
-        // Cache các bản dịch
-        subtitles.forEach((sub, index) => {
-            if (translations[index]) {
-                translatedSubtitles.set(sub[1], translations[index].trim());
-            }
-        });
-        console.log("Translations loaded:", translatedSubtitles);
-    });
-
-    // Close transcript panel
-    const container = document.querySelector('div.sticky.top-0.flex.justify-between.bg-base-200.py-4.pr-4.text-neutral');
-    const closeButton = container ? container.querySelector('button.btn.btn-circle.btn-ghost.btn-sm') : null;
-    if (closeButton) {
-        closeButton.click();
-        console.log('Transcript panel closed');
-    }
-
-    // Start subtitle updater
-    startSubtitleUpdater();
-}
-
-// Thêm biến để theo dõi trạng thái dịch
-let isTranslating = false;
-
-// Thêm hàm tạo và chèn icon
-function createTranslateIcon() {
-    const site = getCurrentSite();
-    let container;
-
-    if (site === 'coursera') {
-        container = document.querySelector('#video-player-row');
-    } else if (site === 'deeplearning') {
-        container = document.querySelector('div[data-media-provider]');
-    }
-
-    if (!container || document.querySelector('.translate-icon')) return;
-
-    const icon = document.createElement('div');
-    icon.className = 'translate-icon';
-    icon.innerHTML = '🌐';
-
-    // Thêm sự kiện click với stopPropagation
-    icon.addEventListener('click', (event) => {
-        event.stopPropagation();
-        event.preventDefault();
-
-        // Toggle trạng thái dịch
-        isTranslating = !isTranslating;
-        icon.style.backgroundColor = isTranslating ? '#1E80E2' : 'rgba(0, 0, 0, 0.5)';
-
-        if (isTranslating) {
-            toggleDefaultCaptions(true); // Bật CC gốc
-            observeCaptions(); // Bắt đầu theo dõi và ẩn caption gốc
-            openBilingual();
-        } else {
-            stopObservingCaptions(); // Dừng theo dõi
-            toggleDefaultCaptions(false); // Tắt CC gốc
-            const translatedCaptionsDiv = document.querySelector('.translated-captions');
-            if (translatedCaptionsDiv) {
-                translatedCaptionsDiv.remove();
-            }
-            // Xóa style ẩn của caption gốc
-            const originalCaptions = document.querySelector('.vds-captions');
-            if (originalCaptions) {
-                originalCaptions.style.display = '';
-            }
-        }
-    });
-
-    // Thêm style cho icon
-    icon.style.cssText = `
-        position: absolute;
-        top: 20px;
-        right: 20px;
-        background: rgba(0, 0, 0, 0.5);
-        color: white;
-        padding: 8px;
-        border-radius: 50%;
-        cursor: pointer;
-        z-index: 1000;
-        opacity: 0.7;
-        transition: opacity 0.3s, background-color 0.3s;
-        font-size: 20px;
-        width: 40px;
-        height: 40px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        pointer-events: auto; /* Đảm bảo icon nhận được sự kiện click */
-    `;
-
-    // Thêm hover effect
-    icon.addEventListener('mouseover', () => {
-        icon.style.opacity = '1';
-    });
-    icon.addEventListener('mouseout', () => {
-        icon.style.opacity = '0.7';
-    });
-
-    // Tạo một wrapper div để chứa icon
-    const iconWrapper = document.createElement('div');
-    iconWrapper.style.cssText = `
-        position: absolute;
-        top: 0;
-        right: 0;
-        z-index: 1000;
-        pointer-events: none; /* Cho phép click xuyên qua wrapper */
-    `;
-
-    iconWrapper.appendChild(icon);
-    container.insertBefore(iconWrapper, container.firstChild);
-}
-
-// Thêm MutationObserver để theo dõi khi video player được load
-function observeVideoContainer() {
-    const site = getCurrentSite();
-    let selector;
-
-    if (site === 'coursera') {
-        selector = '#video-player-row';
-    } else if (site === 'deeplearning') {
-        selector = 'div[data-media-provider]';
-    } else {
-        return;
-    }
-
-    const observer = new MutationObserver((mutations) => {
-        mutations.forEach((mutation) => {
-            if (document.querySelector(selector)) {
-                createTranslateIcon();
-            }
-        });
-    });
-
-    observer.observe(document.body, {
-        childList: true,
-        subtree: true
-    });
-}
-
-// Chạy observer khi trang web load
-document.addEventListener('DOMContentLoaded', observeVideoContainer);
-// Chạy ngay lập tức trong trường hợp trang đã load
-observeVideoContainer();
-
-// Các hàm tiện ích
-String.prototype.replaceAt = function (index, replacement) {
-    return (
-        this.substr(0, index) +
-        replacement +
-        this.substr(index + replacement.length)
-    );
-};
-
-function sleep(ms) {
-    return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-function getTexts(cues) {
-    let cuesTextList = "";
-    for (let i = 0; i < cues.length; i++) {
-        if (cues[i].text[cues[i].text.length - 1] == ".") {
-            cues[i].text = cues[i].text.replaceAt(
-                cues[i].text.length - 1,
-                ". z~~~z "
-            );
-        }
-        cuesTextList += cues[i].text.replace(/\n/g, " ") + " ";
-    }
-    return cuesTextList;
-}
-
-function getTranslation(words, callback) {
-    console.log("getTranslation", words);
-    const lang = "vi"; // Mặc định là tiếng Việt
-    const xhr = new XMLHttpRequest();
-    let url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=${lang}&dt=t&q=${encodeURI(
-        words
-    )}`;
-
-    xhr.open("GET", url, true);
-    xhr.responseType = "text";
-    xhr.onload = function () {
-        if (xhr.readyState === xhr.DONE) {
-            if (xhr.status === 200 || xhr.status === 304) {
-                const translatedList = JSON.parse(xhr.responseText)[0];
-                let translatedText = "";
-                for (let i = 0; i < translatedList.length; i++) {
-                    translatedText += translatedList[i][0];
-                }
-                callback(translatedText);
-            }
-        }
-    };
-    xhr.send();
-}
-
-// Cập nhật hàm updateSubtitles
+// Update subtitles for deeplearning
 function updateSubtitles(currentTime) {
     if (!isTranslating) return;
 
@@ -519,117 +195,230 @@ function updateSubtitles(currentTime) {
     const cueDiv = translatedCaptionsDiv.querySelector('[data-part="cue"]');
     if (!cueDiv) return;
 
-    // Tìm phụ đề phù hợp với thời gian hiện tại
-    const currentSubtitle = subtitles
-        .filter(([time]) => {
-            const [minutes, seconds] = time.split(':').map(Number);
-            const totalSeconds = minutes * 60 + seconds;
-            return currentTime >= totalSeconds;
-        })
-        .pop();
-
-    // Cập nhật nội dung phụ đề
-    if (currentSubtitle) {
-        const [_, text] = currentSubtitle;
-        // Lấy bản dịch từ cache
-        const translatedText = translatedSubtitles.get(text);
-        if (translatedText) {
-            cueDiv.textContent = translatedText;
+    // Find current subtitle
+    let currentSub = null;
+    for (const [time, text] of subtitles) {
+        const [minutes, seconds] = time.split(':').map(Number);
+        const totalSeconds = minutes * 60 + seconds;
+        if (currentTime >= totalSeconds) {
+            currentSub = text;
+        } else {
+            break;
         }
+    }
+
+    // Display translated text
+    if (currentSub && translatedSubtitles.has(currentSub)) {
+        cueDiv.textContent = translatedSubtitles.get(currentSub);
     } else {
         cueDiv.textContent = '';
     }
 }
 
-// Cập nhật hàm startSubtitleUpdater
+// Start subtitle updater
 function startSubtitleUpdater() {
-    // Clear existing interval if any
     if (window.subtitleInterval) {
         clearInterval(window.subtitleInterval);
     }
 
-    // Start new interval
     window.subtitleInterval = setInterval(() => {
-        const currentTime = getCurrentTime();
-        updateSubtitles(currentTime);
-    }, 1000);
+        const site = getCurrentSite();
+        let videoElement = null;
+        
+        if (site === 'deeplearning') {
+            const videoContainer = document.querySelector('div[data-media-provider]');
+            videoElement = videoContainer?.querySelector('video');
+        }
+
+        if (videoElement) {
+            updateSubtitles(videoElement.currentTime);
+        }
+    }, 100);
 }
 
-function getCurrentTime() {
-    const site = getCurrentSite();
-    let videoElement;
-
-    if (site === 'coursera') {
-        videoElement = document.querySelector('video');
-    } else if (site === 'deeplearning') {
-        const videoContainer = document.querySelector('div[data-media-provider]');
-        videoElement = videoContainer ? videoContainer.querySelector('video') : null;
-    }
-
-    if (videoElement) {
-        return videoElement.currentTime;
-    }
-    return 0;
-}
-
-// Lưu trữ phụ đề gốc cho Coursera
-let originalCuesText = new Map();
-
-// Thêm hàm khôi phục tiếng Anh
+// Restore English
 function restoreEnglish() {
     const site = getCurrentSite();
     
     if (site === 'deeplearning') {
-        // Dừng theo dõi caption
-        stopObservingCaptions();
-        
-        // Xóa div phụ đề dịch
         const translatedCaptionsDiv = document.querySelector('.translated-captions');
         if (translatedCaptionsDiv) {
             translatedCaptionsDiv.remove();
         }
         
-        // Khôi phục hiển thị caption gốc
-        const originalCaptions = document.querySelectorAll('.vds-captions');
-        originalCaptions.forEach(caption => {
-            if (caption) {
-                caption.style.display = '';
-            }
-        });
-        
-        // Dừng interval cập nhật phụ đề
         if (window.subtitleInterval) {
             clearInterval(window.subtitleInterval);
             window.subtitleInterval = null;
         }
         
-        // Xóa cache bản dịch
         translatedSubtitles.clear();
-        
         console.log('Restored to English for deeplearning.ai');
+        
     } else if (site === 'coursera') {
-        // Khôi phục phụ đề gốc từ cache
-        let tracks = document.getElementsByTagName("track");
-        let en;
+        const tracks = document.getElementsByTagName("track");
+        let enTrack = null;
         
         for (let i = 0; i < tracks.length; i++) {
             if (tracks[i].srclang === "en") {
-                en = tracks[i];
+                enTrack = tracks[i];
                 break;
             }
         }
         
-        if (en && en.track.cues) {
-            let cues = en.track.cues;
-            
-            // Khôi phục text gốc từ cache
+        if (enTrack && enTrack.track.cues) {
+            const cues = enTrack.track.cues;
             for (let i = 0; i < cues.length; i++) {
                 if (originalCuesText.has(i)) {
                     cues[i].text = originalCuesText.get(i);
                 }
             }
-            
-            console.log('Restored to English for Coursera');
+        }
+        console.log('Restored to English for Coursera');
+    }
+}
+
+// Translation API call
+function getTranslation(text, callback) {
+    const xhr = new XMLHttpRequest();
+    const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=${selectedLanguage}&dt=t&q=${encodeURIComponent(text)}`;
+
+    xhr.open("GET", url, true);
+    xhr.responseType = "text";
+    xhr.onload = function () {
+        if (xhr.readyState === xhr.DONE && (xhr.status === 200 || xhr.status === 304)) {
+            try {
+                const response = JSON.parse(xhr.responseText);
+                let translated = "";
+                if (response && response[0]) {
+                    for (let i = 0; i < response[0].length; i++) {
+                        if (response[0][i][0]) {
+                            translated += response[0][i][0];
+                        }
+                    }
+                }
+                callback(translated || text);
+            } catch (e) {
+                console.error('Translation error:', e);
+                callback(text);
+            }
+        }
+    };
+    xhr.onerror = function() {
+        console.error('Translation request failed');
+        callback(text);
+    };
+    xhr.send();
+}
+
+// Video change detection with track monitoring for Coursera
+setInterval(() => {
+    // Check URL change
+    if (window.location.href !== currentUrl) {
+        console.log('URL changed');
+        currentUrl = window.location.href;
+        currentVideoSrc = null;
+        
+        if (isTranslating) {
+            setTimeout(() => {
+                console.log('Auto-translating after URL change');
+                openBilingual();
+            }, 2000);
         }
     }
+    
+    // Check video source change
+    const site = getCurrentSite();
+    let videoElement = null;
+    
+    if (site === 'coursera') {
+        videoElement = document.querySelector('video');
+        
+        // Monitor track changes for Coursera SPA
+        if (videoElement && isTranslating) {
+            const tracks = document.getElementsByTagName("track");
+            let enTrack = null;
+            
+            for (let i = 0; i < tracks.length; i++) {
+                if (tracks[i].srclang === "en") {
+                    enTrack = tracks[i];
+                    break;
+                }
+            }
+            
+            // Check if track has new cues (new video loaded)
+            if (enTrack && enTrack.track.cues) {
+                const cuesLength = enTrack.track.cues.length;
+                
+                // If we have a different number of cues or no original cache, re-translate
+                if (cuesLength > 0 && (!originalCuesText.size || originalCuesText.size !== cuesLength)) {
+                    console.log('New Coursera video detected (cues changed)');
+                    setTimeout(() => {
+                        console.log('Auto-translating new Coursera video');
+                        translateCoursera();
+                    }, 500);
+                }
+            }
+        }
+    } else if (site === 'deeplearning') {
+        const videoContainer = document.querySelector('div[data-media-provider]');
+        videoElement = videoContainer?.querySelector('video');
+    }
+    
+    // Check video src change for other cases
+    if (videoElement) {
+        const newVideoSrc = videoElement.src || videoElement.currentSrc;
+        
+        if (newVideoSrc && newVideoSrc !== currentVideoSrc) {
+            console.log('Video source changed');
+            currentVideoSrc = newVideoSrc;
+            
+            if (isTranslating && site === 'deeplearning') {
+                setTimeout(() => {
+                    console.log('Auto-translating after video change');
+                    openBilingual();
+                }, 1500);
+            }
+        }
+    }
+}, 1000);
+
+// Additional observer for Coursera DOM changes
+if (getCurrentSite() === 'coursera') {
+    const observer = new MutationObserver((mutations) => {
+        if (!isTranslating) return;
+        
+        for (const mutation of mutations) {
+            // Check for track element changes
+            if (mutation.addedNodes.length) {
+                for (const node of mutation.addedNodes) {
+                    if (node.nodeName === 'TRACK' && node.srclang === 'en') {
+                        console.log('New track element detected');
+                        setTimeout(() => {
+                            translateCoursera();
+                        }, 800);
+                        return;
+                    }
+                    
+                    // Check if video element is added
+                    if (node.nodeName === 'VIDEO' || (node.querySelector && node.querySelector('video'))) {
+                        console.log('New video element detected');
+                        setTimeout(() => {
+                            translateCoursera();
+                        }, 800);
+                        return;
+                    }
+                }
+            }
+        }
+    });
+    
+    observer.observe(document.body, {
+        childList: true,
+        subtree: true
+    });
+}
+
+// Utility function
+function sleep(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
 }
