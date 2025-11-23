@@ -418,6 +418,28 @@ if (getCurrentSite() === 'coursera') {
     });
 }
 
+// Reset toggle and subtitles when page is closed or refreshed
+function handlePageTeardown() {
+    const site = getCurrentSite();
+    if (!site) return;
+
+    if (isTranslating) {
+        restoreEnglish();
+        isTranslating = false;
+    }
+
+    if (chrome?.storage?.sync) {
+        chrome.storage.sync.set({ toggleState: false }, () => {
+            if (chrome.runtime?.lastError) {
+                console.warn('Failed to reset toggle state:', chrome.runtime.lastError);
+            }
+        });
+    }
+}
+
+window.addEventListener('pagehide', handlePageTeardown);
+window.addEventListener('beforeunload', handlePageTeardown);
+
 // Utility function
 function sleep(ms) {
     return new Promise((resolve) => setTimeout(resolve, ms));
